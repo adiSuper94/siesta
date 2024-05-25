@@ -1,0 +1,48 @@
+package generated
+import (
+  "fmt"
+	"context"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/pgtype"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+type DBTX interface {
+	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...interface{}) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...interface{}) pgx.Row
+}
+
+{{ range $tableName, $table := .Tables }}
+type {{ toCamelCase $table.TableName}} struct {
+{{ range $table.Columns}}
+  {{ toCamelCase .ColumnName }} {{ .GetGoType }}
+{{end}}
+}
+
+func SelectAll{{ toCamelCase $table.TableName }}(ctx context.Context, db DBTX) ([]{{ toCamelCase $table.TableName }}, error){
+  var res []{{ toCamelCase $table.TableName }}
+  query := `SELECT * FROM {{ $table.TableName }}`
+	rows, err := db.Query(ctx, query)
+  defer rows.Close()
+  if err != nil{
+    fmt.Printf("error while executing %v \n Error: %v\n", query, err)
+    return res, err
+  }
+  for rows.Next(){
+    var row {{ toCamelCase $table.TableName }}
+    rows.Scan(&row)
+    res = append(rows, row)
+  }
+  return res, nil
+}
+
+func Insert{{ toCamelCase $table.TableName }}(ctx context.Context, db DBTX, t {{ toCamelCase $table.TableName }}) ({{ toCamelCase $table.TableName }}, error){
+  query := `INSERT INTO {{$table.TableName}}({{range $table.Columns}}{{.ColumnName}},{{end}}) VALUES({{range $i := intSlice 1 (len .Columns)}}${{$i}},{{end}} ) RETURNING *`
+  rawRow := db.QueryRow(ctx, query, {{range $table.Columns}}&t.{{ toCamelCase .ColumnName}},{{end}})
+  var row {{ toCamelCase $table.TableName }}
+  rawRow.Scan(&row)
+  return row,nil
+
+}
+{{end}}

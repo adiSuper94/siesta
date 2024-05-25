@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"text/template"
 
+	"github.com/iancoleman/strcase"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,25 +33,36 @@ type pgAdapter struct {
 type pgSchema struct {
 	tableCatalog string
 	tableSchema  string
-	tables       map[string]pgTable
+	Tables       map[string]pgTable
 }
 
 type pgTable struct {
-	tableType string
-	tableName string
-	columns   map[string]pgColumn
-	pk        map[string]pgColumn
+	TableType string
+	TableName string
+	Columns   map[string]pgColumn
+	PK        map[string]pgColumn
 }
 
 type pgColumn struct {
-	columnName    string
+	ColumnName    string
 	columnDefault sql.NullString
 	isNullable    sql.NullString
 	dataType      string
 	isGenerated   sql.NullString
 }
 
-func (db pgAdapter) getTablesNames(ctx context.Context) {
+func intSlice(start int, end int) []int {
+	if start >= end {
+		return nil
+	}
+	result := make([]int, end-start+1)
+	for i := start; i <= end; i++ {
+		result[i-start] = i
+	}
+	return result
+}
+
+func (db pgAdapter) scanDB(ctx context.Context) {
 	colQuery := `
   SELECT c.table_catalog, c.table_schema, c.table_name, c.column_name, c.column_default,
     c.is_nullable, c.data_type, c.is_generated, t.table_type
@@ -84,28 +98,28 @@ func (db pgAdapter) getTablesNames(ctx context.Context) {
 			schema = pgSchema{
 				tableCatalog: catalogName.String,
 				tableSchema:  tableSchema.String,
-				tables:       make(map[string]pgTable),
+				Tables:       make(map[string]pgTable),
 			}
 			catalog[tableSchema.String] = schema
 		}
-		table, ok := schema.tables[tableName.String]
+		table, ok := schema.Tables[tableName.String]
 		if !ok {
 			table = pgTable{
-				tableName: tableName.String,
-				tableType: tableType.String,
-				columns:   make(map[string]pgColumn),
-				pk:        make(map[string]pgColumn),
+				TableName: tableName.String,
+				TableType: tableType.String,
+				Columns:   make(map[string]pgColumn),
+				PK:        make(map[string]pgColumn),
 			}
-			schema.tables[tableName.String] = table
+			schema.Tables[tableName.String] = table
 		}
 		column := pgColumn{
-			columnName:    columnName.String,
+			ColumnName:    columnName.String,
 			columnDefault: columnDefault,
 			isNullable:    isNullable,
 			dataType:      dataType.String,
 			isGenerated:   isGenerated,
 		}
-		table.columns[columnName.String] = column
+		table.Columns[columnName.String] = column
 		if err != nil {
 			log.Fatalf(" error while iterating tables %v", err)
 		}
@@ -120,19 +134,88 @@ func (db pgAdapter) getTablesNames(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		table, ok := schema.tables[tableName.String]
+		table, ok := schema.Tables[tableName.String]
 		if !ok {
 			continue
 		}
-		pkColumn, ok := table.columns[columnName.String]
+		pkColumn, ok := table.Columns[columnName.String]
 		if !ok {
 			continue
 		}
-		table.pk[columnName.String] = pkColumn
+		table.PK[columnName.String] = pkColumn
 
 	}
-	fmt.Printf("%v", catalog)
+	fmt.Printf("\n\n\n")
+	tmpl, err := template.New("model.templ").
+		Funcs(template.FuncMap{"toCamelCase": strcase.ToCamel, "intSlice": intSlice}).
+		ParseFiles("model.templ")
+	if err != nil {
+		log.Fatalf("errror while parsing template %v", err)
+	}
+	for _, schema := range catalog {
+		tmpl.Execute(os.Stdout, schema)
+	}
 }
+
+func (db pgAdapter) getAll(ctx context.Context, schemaName string, table pgTable) []interface{} {
+	query := fmt.Sprintf(`SELECT * FROM "%s"."%s"`, schemaName, table.TableName)
+	fmt.Printf("%s\n", query)
+	rows, err := db.conn.Query(ctx, query)
+	defer rows.Close()
+	fd := rows.FieldDescriptions()
+	fmt.Printf("%v\n", fd)
+	if err != nil {
+		log.Fatalf(" error while executing getAll for %s \n %v", table.TableName, err)
+	}
+	var result []interface{}
+	cols := table.Columns
+	for rows.Next() {
+		columns := make([]interface{}, len(cols))
+		columnPointers := make([]interface{}, len(cols))
+		for i := range columns {
+			columnPointers[i] = &columns[i]
+		}
+
+		// Scan the result into the column pointers...
+		if err := rows.Scan(columnPointers...); err != nil {
+			return nil
+		}
+		m := make(map[string]interface{})
+		i := 0
+		for colName := range cols {
+			val := columnPointers[i].(*interface{})
+			m[colName] = *val
+			i += 1
+		}
+		fmt.Printf("%v", m)
+	}
+	return result
+}
+
+func (column pgColumn) GetGoType() string {
+	if !column.isNullable.Valid {
+		log.Fatalf("column nullable information not available in column %v", column)
+	}
+	switch column.dataType {
+	case "uuid", "text", "character varying":
+		if column.isNullable.String == "NO" {
+			return "string"
+		} else {
+			return "sql.NullString"
+		}
+	case "boolean":
+		if column.isNullable.String == "NO" {
+			return "bool"
+		} else {
+			return "sql.NullBool"
+		}
+	case "timestamp with time zone":
+		return "pgtype.Timestamptz"
+	}
+	log.Fatalf("invalid dataype for column: %v", column)
+	return ""
+}
+
 func createDBConnection(connectionCount int32) *pgxpool.Pool {
 	pgxConfig, err := pgxpool.ParseConfig("postgres://adisuper:adisuper@localhost:5432/turbo?sslmode=disable")
 	if err != nil {
@@ -153,6 +236,6 @@ func main() {
 	conn := createDBConnection(connectionCount)
 	defer conn.Close()
 	pg := New(conn)
-	pg.getTablesNames(context.Background())
+	pg.scanDB(context.Background())
 
 }
