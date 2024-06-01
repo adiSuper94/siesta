@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"text/template"
 
 	"github.com/iancoleman/strcase"
@@ -37,35 +38,82 @@ type pgSchema struct {
 }
 
 type pgTable struct {
-	TableType string
+	tableType string
 	TableName string
-	Columns   map[string]pgColumn
-	PK        map[string]pgColumn
+	columns   map[string]pgColumn
+	pk        map[string]pgColumn
 }
 
 type pgColumn struct {
-	ColumnName    string
-	columnDefault sql.NullString
-	isNullable    sql.NullString
-	dataType      string
-	isGenerated   sql.NullString
+	ColumnName      string
+	columnDefault   sql.NullString
+	ordinalPosition int
+	isNullable      sql.NullString
+	dataType        string
+	isGenerated     sql.NullString
 }
 
-func intSlice(start int, end int) []int {
-	if start >= end {
-		return nil
+func (t pgTable) InsertParams() string {
+	size := len(t.columns)
+	params := make([]string, size)
+	for i := 1; i <= size; i++ {
+		params[i-1] = fmt.Sprintf("$%d", i)
 	}
-	result := make([]int, end-start+1)
-	for i := start; i <= end; i++ {
-		result[i-start] = i
+	return strings.Join(params, ",")
+}
+
+func (t pgTable) CommaSeparatedColumnNames() string {
+	csvColumnNames := make([]string, len(t.columns))
+	for columnName, column := range t.columns {
+		csvColumnNames[column.ordinalPosition-1] = columnName
 	}
-	return result
+	return strings.Join(csvColumnNames, ",")
+}
+
+func (t pgTable) Columns() []pgColumn {
+	columns := make([]pgColumn, len(t.columns))
+	for _, column := range t.columns {
+		columns[column.ordinalPosition-1] = column
+	}
+	return columns
+}
+
+func (t pgTable) PK() []pgColumn{
+	columns := make([]pgColumn, len(t.pk))
+  i := 0
+	for _, column := range t.pk {
+		columns[i] = column
+    i++
+	}
+	return columns
+}
+
+func (t pgTable) SelectByPKQuery() string {
+	var query string
+	var cols = ""
+	var criteria = ""
+	for i, col := range t.Columns() {
+		if i != 0 {
+			cols += ", "
+		}
+		cols += col.ColumnName
+	}
+	i := 1
+	for _, col := range t.pk {
+		if i != 1 {
+			criteria += " AND "
+		}
+		criteria += fmt.Sprintf("%s=$%d", col.ColumnName, i)
+		i++
+	}
+	query = fmt.Sprintf("SELECT %s FROM %s WHERE %s", cols, t.TableName, criteria)
+	return query
 }
 
 func (db pgAdapter) scanDB(ctx context.Context) {
 	colQuery := `
   SELECT c.table_catalog, c.table_schema, c.table_name, c.column_name, c.column_default,
-    c.is_nullable, c.data_type, c.is_generated, t.table_type
+    c.is_nullable, c.data_type, c.is_generated, c.ordinal_position, t.table_type
   FROM information_schema.columns as c
   INNER JOIN information_schema.tables as t
     ON t.table_schema = c.table_schema and t.table_name = c.table_name
@@ -89,7 +137,8 @@ func (db pgAdapter) scanDB(ctx context.Context) {
 	}
 	for columns.Next() {
 		var catalogName, tableSchema, tableName, columnName, columnDefault, isNullable, dataType, isGenerated, tableType sql.NullString
-		columns.Scan(&catalogName, &tableSchema, &tableName, &columnName, &columnDefault, &isNullable, &dataType, &isGenerated, &tableType)
+		var ordinalPostion int
+		columns.Scan(&catalogName, &tableSchema, &tableName, &columnName, &columnDefault, &isNullable, &dataType, &isGenerated, &ordinalPostion, &tableType)
 		if !catalogName.Valid || !tableSchema.Valid || !tableName.Valid || !columnName.Valid || !tableType.Valid || !dataType.Valid {
 			continue
 		}
@@ -106,20 +155,21 @@ func (db pgAdapter) scanDB(ctx context.Context) {
 		if !ok {
 			table = pgTable{
 				TableName: tableName.String,
-				TableType: tableType.String,
-				Columns:   make(map[string]pgColumn),
-				PK:        make(map[string]pgColumn),
+				tableType: tableType.String,
+				columns:   make(map[string]pgColumn),
+				pk:        make(map[string]pgColumn),
 			}
 			schema.Tables[tableName.String] = table
 		}
 		column := pgColumn{
-			ColumnName:    columnName.String,
-			columnDefault: columnDefault,
-			isNullable:    isNullable,
-			dataType:      dataType.String,
-			isGenerated:   isGenerated,
+			ColumnName:      columnName.String,
+			columnDefault:   columnDefault,
+			isNullable:      isNullable,
+			dataType:        dataType.String,
+			isGenerated:     isGenerated,
+			ordinalPosition: ordinalPostion,
 		}
-		table.Columns[columnName.String] = column
+		table.columns[columnName.String] = column
 		if err != nil {
 			log.Fatalf(" error while iterating tables %v", err)
 		}
@@ -138,22 +188,35 @@ func (db pgAdapter) scanDB(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		pkColumn, ok := table.Columns[columnName.String]
+		pkColumn, ok := table.columns[columnName.String]
 		if !ok {
 			continue
 		}
-		table.PK[columnName.String] = pkColumn
+		table.pk[columnName.String] = pkColumn
 
 	}
 	fmt.Printf("\n\n\n")
 	tmpl, err := template.New("model.templ").
-		Funcs(template.FuncMap{"toCamelCase": strcase.ToCamel, "intSlice": intSlice}).
+  Funcs(template.FuncMap{"toCamelCase": strcase.ToCamel, "toLowerCamelCase": strcase.ToLowerCamel}).
 		ParseFiles("model.templ")
 	if err != nil {
 		log.Fatalf("errror while parsing template %v", err)
 	}
+	os.Remove("./generated/generated.go")
+	os.Remove("./generated")
+	err = os.Mkdir("generated", 0755)
+	if err != nil {
+		log.Fatalf("error while creating dir \n %v", err)
+	}
+	f, err := os.Create("./generated/generated.go")
+	if err != nil {
+		log.Fatalf("error while creating file \n %v", err)
+	}
 	for _, schema := range catalog {
-		tmpl.Execute(os.Stdout, schema)
+		err := tmpl.Execute(f, schema)
+		if err != nil {
+			log.Fatalf("error while executing template \n %v", err)
+		}
 	}
 }
 
@@ -168,7 +231,7 @@ func (db pgAdapter) getAll(ctx context.Context, schemaName string, table pgTable
 		log.Fatalf(" error while executing getAll for %s \n %v", table.TableName, err)
 	}
 	var result []interface{}
-	cols := table.Columns
+	cols := table.columns
 	for rows.Next() {
 		columns := make([]interface{}, len(cols))
 		columnPointers := make([]interface{}, len(cols))
@@ -222,7 +285,6 @@ func createDBConnection(connectionCount int32) *pgxpool.Pool {
 		panic(err)
 	}
 	pgxConfig.MaxConns = connectionCount
-
 	conn, err := pgxpool.NewWithConfig(context.TODO(), pgxConfig)
 	if err != nil {
 		panic(err)

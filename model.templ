@@ -15,14 +15,13 @@ type DBTX interface {
 
 {{ range $tableName, $table := .Tables }}
 type {{ toCamelCase $table.TableName}} struct {
-{{ range $table.Columns}}
-  {{ toCamelCase .ColumnName }} {{ .GetGoType }}
+{{ range $table.Columns}} {{ toCamelCase .ColumnName }} {{ .GetGoType }}
 {{end}}
 }
 
-func SelectAll{{ toCamelCase $table.TableName }}(ctx context.Context, db DBTX) ([]{{ toCamelCase $table.TableName }}, error){
-  var res []{{ toCamelCase $table.TableName }}
-  query := `SELECT * FROM {{ $table.TableName }}`
+func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ toCamelCase $tableName }}, error){
+  var res []{{ toCamelCase $tableName }}
+  query := `SELECT {{ $table.CommaSeparatedColumnNames }} FROM {{ $tableName }}`
 	rows, err := db.Query(ctx, query)
   defer rows.Close()
   if err != nil{
@@ -30,19 +29,27 @@ func SelectAll{{ toCamelCase $table.TableName }}(ctx context.Context, db DBTX) (
     return res, err
   }
   for rows.Next(){
-    var row {{ toCamelCase $table.TableName }}
-    rows.Scan(&row)
-    res = append(rows, row)
+    var row {{ toCamelCase $tableName }}
+    rows.Scan({{range $table.Columns}}&row.{{ toCamelCase .ColumnName}},{{end}})
+    res = append(res, row)
   }
   return res, nil
 }
 
-func Insert{{ toCamelCase $table.TableName }}(ctx context.Context, db DBTX, t {{ toCamelCase $table.TableName }}) ({{ toCamelCase $table.TableName }}, error){
-  query := `INSERT INTO {{$table.TableName}}({{range $table.Columns}}{{.ColumnName}},{{end}}) VALUES({{range $i := intSlice 1 (len .Columns)}}${{$i}},{{end}} ) RETURNING *`
+func Insert{{ toCamelCase $tableName }}(ctx context.Context, db DBTX, t {{ toCamelCase $tableName }}) ({{ toCamelCase $tableName }}, error){
+  query := `INSERT INTO {{$table.CommaSeparatedColumnNames}}) VALUES({{$table.InsertParams}}) RETURNING *`
   rawRow := db.QueryRow(ctx, query, {{range $table.Columns}}&t.{{ toCamelCase .ColumnName}},{{end}})
   var row {{ toCamelCase $table.TableName }}
-  rawRow.Scan(&row)
+  rawRow.Scan({{range $table.Columns}}&row.{{ toCamelCase .ColumnName}},{{end}})
   return row,nil
+}
 
+func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase
+.ColumnName}} {{.GetGoType}}, {{end}}) {{toCamelCase $tableName}}{
+  query := "{{ $table.SelectByPKQuery }}"
+  rawRow := db.QueryRow(ctx, query, {{range $table.PK}}{{ toLowerCamelCase .ColumnName}},{{end}})
+  var row {{ toCamelCase $table.TableName }}
+  rawRow.Scan({{range $table.Columns}}&row.{{ toCamelCase .ColumnName}},{{end}})
+  return row
 }
 {{end}}
