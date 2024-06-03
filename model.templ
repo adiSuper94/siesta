@@ -1,4 +1,4 @@
-package generated
+package main
 import (
   "fmt"
 	"context"
@@ -13,15 +13,37 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...interface{}) pgx.Row
 }
 
+type Option[T any] struct{
+  value T
+  isSome bool
+}
+
+func Some[T any](value T) Option[T] {
+  return Option[T]{isSome: true, value: value}
+}
+
+func None[T any]() Option[T] {
+  return Option[T]{isSome: false}
+}
+
+func(o Option[T]) Get() T {
+  if o.isSome {return o.value}
+  panic("option is empty")
+}
+
+func (o Option[T]) IsEmpty() bool {
+  return !o.isSome
+}
+
 {{ range $tableName, $table := .Tables }}
 type {{ toCamelCase $table.TableName}} struct {
-{{ range $table.Columns}} {{ toCamelCase .ColumnName }} {{ .GetGoType }}
+{{ range $table.Columns}} {{ toCamelCase .ColumnName }} Option[{{ .GetGoType }}]
 {{end}}
 }
 
 func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ toCamelCase $tableName }}, error){
   var res []{{ toCamelCase $tableName }}
-  query := `SELECT {{ $table.CommaSeparatedColumnNames }} FROM {{ $tableName }}`
+  query := "{{$table.SelectAllQuery}}"
 	rows, err := db.Query(ctx, query)
   defer rows.Close()
   if err != nil{
@@ -29,27 +51,108 @@ func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ t
     return res, err
   }
   for rows.Next(){
-    var row {{ toCamelCase $tableName }}
-    rows.Scan({{range $table.Columns}}&row.{{ toCamelCase .ColumnName}},{{end}})
+    {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
+    {{end}}
+    rows.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
+    row := {{toCamelCase $tableName}}{
+      {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
+    }
     res = append(res, row)
   }
   return res, nil
 }
 
-func Insert{{ toCamelCase $tableName }}(ctx context.Context, db DBTX, t {{ toCamelCase $tableName }}) ({{ toCamelCase $tableName }}, error){
-  query := `INSERT INTO {{$table.CommaSeparatedColumnNames}}) VALUES({{$table.InsertParams}}) RETURNING *`
-  rawRow := db.QueryRow(ctx, query, {{range $table.Columns}}&t.{{ toCamelCase .ColumnName}},{{end}})
-  var row {{ toCamelCase $table.TableName }}
-  rawRow.Scan({{range $table.Columns}}&row.{{ toCamelCase .ColumnName}},{{end}})
-  return row,nil
-}
+//func Insert{{ toCamelCase $tableName }}(ctx context.Context, db DBTX, t {{ toCamelCase $tableName }}) ({{ toCamelCase $tableName }}, error){
+//  query := "{{$table.InsertQuery}}"
+//  rawRow := db.QueryRow(ctx, query, {{range $table.Columns}}&t.{{ toCamelCase .ColumnName}},{{end}})
+//  {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
+//  {{end}}
+//  rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
+//  row := {{toCamelCase $tableName}}{
+//    {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
+//  }
+//  return row,nil
+//}
 
 func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase
 .ColumnName}} {{.GetGoType}}, {{end}}) {{toCamelCase $tableName}}{
   query := "{{ $table.SelectByPKQuery }}"
   rawRow := db.QueryRow(ctx, query, {{range $table.PK}}{{ toLowerCamelCase .ColumnName}},{{end}})
-  var row {{ toCamelCase $table.TableName }}
-  rawRow.Scan({{range $table.Columns}}&row.{{ toCamelCase .ColumnName}},{{end}})
+  {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
+  {{end}}
+  rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
+  row := {{toCamelCase $tableName}}{
+    {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
+  }
   return row
 }
+
+func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}){
+  query := "{{$table.DeleteQuery}}"
+  db.Exec(ctx, query)
+}
+
+func Insert{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCamelCase $tableName}}) (*{{toCamelCase $tableName}}, error){
+  cols := ""
+  params:= ""
+  vals := make([]any, 1)
+  i := 1
+  {{range $table.Columns}}
+  if(!row.{{toCamelCase .ColumnName}}.IsEmpty()){
+    col := "{{.ColumnName}}"
+    vals = append(vals, row.{{toCamelCase .ColumnName}}.Get())
+    if cols == "" {
+      cols = col
+      params = fmt.Sprintf("$%d", i)
+      i++
+    }else{
+      cols = fmt.Sprintf("%s, %s", cols, col)
+      params = fmt.Sprintf("%s, $%d", params, i)
+      i++
+    }
+  }
+  {{end}}
+  query := fmt.Sprintf("INSERT INTO {{$tableName}} (%s) VALUES(%s) RETURNING *", cols, params)
+  rawRow, err := db.Query(ctx, query, vals...)
+  if err != nil{
+    fmt.Printf("Error while inserting into {{$tableName}} row: %v", row)
+    return nil, err
+  }
+  {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
+  {{end}}
+  rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
+  insertedRow := &{{toCamelCase $tableName}}{
+    {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
+  }
+  return insertedRow ,nil
+}
 {{end}}
+
+// test
+
+func createDBConnection(connectionCount int32) *pgxpool.Pool {
+	pgxConfig, err := pgxpool.ParseConfig("postgres://adisuper:adisuper@localhost:5432/turbo?sslmode=disable")
+	if err != nil {
+		panic(err)
+	}
+	pgxConfig.MaxConns = connectionCount
+	conn, err := pgxpool.NewWithConfig(context.TODO(), pgxConfig)
+	if err != nil {
+		panic(err)
+	}
+	return conn
+}
+
+func main(){
+  db := createDBConnection(1)
+  rows , err := SelectAllMessages(context.Background(), db)
+  if err != nil {
+    fmt.Printf("error : %v", err)
+    return
+  }
+  fmt.Printf("select all message : %v", rows)
+
+  row:= GetMessagesByPK(context.Background(), db, "1f9ff8f2-d02a-4b13-a903-1b3fba06e5c9")
+  fmt.Printf("select one message : %v", row)
+
+}

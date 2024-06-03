@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"text/template"
 
 	"github.com/iancoleman/strcase"
@@ -53,23 +52,6 @@ type pgColumn struct {
 	isGenerated     sql.NullString
 }
 
-func (t pgTable) InsertParams() string {
-	size := len(t.columns)
-	params := make([]string, size)
-	for i := 1; i <= size; i++ {
-		params[i-1] = fmt.Sprintf("$%d", i)
-	}
-	return strings.Join(params, ",")
-}
-
-func (t pgTable) CommaSeparatedColumnNames() string {
-	csvColumnNames := make([]string, len(t.columns))
-	for columnName, column := range t.columns {
-		csvColumnNames[column.ordinalPosition-1] = columnName
-	}
-	return strings.Join(csvColumnNames, ",")
-}
-
 func (t pgTable) Columns() []pgColumn {
 	columns := make([]pgColumn, len(t.columns))
 	for _, column := range t.columns {
@@ -78,12 +60,12 @@ func (t pgTable) Columns() []pgColumn {
 	return columns
 }
 
-func (t pgTable) PK() []pgColumn{
+func (t pgTable) PK() []pgColumn {
 	columns := make([]pgColumn, len(t.pk))
-  i := 0
+	i := 0
 	for _, column := range t.pk {
 		columns[i] = column
-    i++
+		i++
 	}
 	return columns
 }
@@ -107,6 +89,47 @@ func (t pgTable) SelectByPKQuery() string {
 		i++
 	}
 	query = fmt.Sprintf("SELECT %s FROM %s WHERE %s", cols, t.TableName, criteria)
+	return query
+}
+
+func (t pgTable) SelectAllQuery() string {
+	cols := ""
+	for i, col := range t.Columns() {
+		if i != 0 {
+			cols += ", "
+		}
+		cols += col.ColumnName
+	}
+	query := fmt.Sprintf("SELECT %s FROM %s", cols, t.TableName)
+	return query
+}
+
+func (t pgTable) InsertQuery() string {
+	cols := ""
+	params := ""
+	for i, col := range t.Columns() {
+		if i != 0 {
+			cols += ", "
+			params += ", "
+		}
+		cols += col.ColumnName
+		params += fmt.Sprintf("$%d", (i + 1))
+	}
+	query := fmt.Sprintf("INSERT %s INTO %s VALUES(%s) RETURNING *", cols, t.TableName, params)
+	return query
+}
+
+func (t pgTable) DeleteQuery() string {
+	i := 1
+	criteria := ""
+	for _, col := range t.pk {
+		if i != 1 {
+			criteria += " AND "
+		}
+		criteria += fmt.Sprintf("%s=$%d", col.ColumnName, i)
+		i++
+	}
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s", t.TableName, criteria)
 	return query
 }
 
@@ -197,7 +220,7 @@ func (db pgAdapter) scanDB(ctx context.Context) {
 	}
 	fmt.Printf("\n\n\n")
 	tmpl, err := template.New("model.templ").
-  Funcs(template.FuncMap{"toCamelCase": strcase.ToCamel, "toLowerCamelCase": strcase.ToLowerCamel}).
+		Funcs(template.FuncMap{"toCamelCase": strcase.ToCamel, "toLowerCamelCase": strcase.ToLowerCamel}).
 		ParseFiles("model.templ")
 	if err != nil {
 		log.Fatalf("errror while parsing template %v", err)
