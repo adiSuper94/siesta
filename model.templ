@@ -13,31 +13,31 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...interface{}) pgx.Row
 }
 
-type Option[T any] struct{
+type option[T any] struct{
   value T
   isSome bool
 }
 
-func Some[T any](value T) Option[T] {
-  return Option[T]{isSome: true, value: value}
+func some[T any](value T) option[T] {
+  return option[T]{isSome: true, value: value}
 }
 
-func None[T any]() Option[T] {
-  return Option[T]{isSome: false}
+func none[T any]() option[T] {
+  return option[T]{isSome: false}
 }
 
-func(o Option[T]) Get() T {
+func(o option[T]) get() T {
   if o.isSome {return o.value}
   panic("option is empty")
 }
 
-func (o Option[T]) IsEmpty() bool {
+func (o option[T]) isEmpty() bool {
   return !o.isSome
 }
 
 {{ range $tableName, $table := .Tables }}
 type {{ toCamelCase $table.TableName}} struct {
-{{ range $table.Columns}} {{ toCamelCase .ColumnName }} Option[{{ .GetGoType }}]
+{{ range $table.Columns}} {{ toCamelCase .ColumnName }} option[{{ .GetGoType }}]
 {{end}}
 }
 
@@ -55,7 +55,7 @@ func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ t
     {{end}}
     rows.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
     row := {{toCamelCase $tableName}}{
-      {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
+      {{range $table.Columns}}{{ toCamelCase .ColumnName}}:some({{toCamelCase .ColumnName}}),{{end}}
     }
     res = append(res, row)
   }
@@ -73,7 +73,7 @@ func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $ta
     return nil, err
   }
   row := {{toCamelCase $tableName}}{
-    {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
+    {{range $table.Columns}}{{ toCamelCase .ColumnName}}:some({{toCamelCase .ColumnName}}),{{end}}
   }
   return &row, nil
 }
@@ -94,9 +94,9 @@ func Insert{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
   vals := make([]any, 1)
   i := 1
   {{range $table.Columns}}
-  if(!row.{{toCamelCase .ColumnName}}.IsEmpty()){
+  if(!row.{{toCamelCase .ColumnName}}.isEmpty()){
     col := "{{.ColumnName}}"
-    vals = append(vals, row.{{toCamelCase .ColumnName}}.Get())
+    vals = append(vals, row.{{toCamelCase .ColumnName}}.get())
     if cols == "" {
       cols = col
       params = fmt.Sprintf("$%d", i)
@@ -118,7 +118,7 @@ func Insert{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
     return nil, err
   }
   insertedRow := &{{toCamelCase $tableName}}{
-    {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
+    {{range $table.Columns}}{{ toCamelCase .ColumnName}}:some({{toCamelCase .ColumnName}}),{{end}}
   }
   return insertedRow ,nil
 }
@@ -129,9 +129,9 @@ func Update{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
   vals := make([]any, 1)
   i := 1
   {{range $table.Columns}}
-  if(!row.{{toCamelCase .ColumnName}}.IsEmpty()){
+  if(!row.{{toCamelCase .ColumnName}}.isEmpty()){
     col := "{{.ColumnName}}"
-    vals = append(vals, row.{{toCamelCase .ColumnName}}.Get())
+    vals = append(vals, row.{{toCamelCase .ColumnName}}.get())
     if i == 1 {
       setClause = fmt.Sprintf("%s %s = $%d", setClause, col, i)
     }else{
@@ -144,7 +144,7 @@ func Update{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
   col := ""
   {{range $table.PK}}
   col = "{{.ColumnName}}"
-  vals = append(vals, row.{{toCamelCase .ColumnName}}.Get())
+  vals = append(vals, row.{{toCamelCase .ColumnName}}.get())
   if i == j {
     whereClause = fmt.Sprintf("%s %s = $%d", whereClause, col, i)
   }else{
@@ -190,18 +190,18 @@ func main(){
 	fmt.Printf("select all message : %v\n\n\n", rows)
 
   msg := Messages{
-    Body: Some("test string"),
-    Id: None[string](),
-    ChatRoomId: Some("e654227a-b11b-48c5-b249-a9e378f64b5f"),
-    SenderId: Some("arun"),
-    CreatedAt: None[pgtype.Timestamptz](),
-    ModifiedAt: None[pgtype.Timestamptz](),
+    Body: some("test string"),
+    Id: none[string](),
+    ChatRoomId: some("e654227a-b11b-48c5-b249-a9e378f64b5f"),
+    SenderId: some("arun"),
+    CreatedAt: none[pgtype.Timestamptz](),
+    ModifiedAt: none[pgtype.Timestamptz](),
   }
 	rowp, err := InsertMessages(context.Background(), db, msg)
   if err != nil {
     fmt.Printf("%v", err)
   }
   fmt.Printf("Inserted row is %v\n", rowp)
-  DeleteMessagesByPK(context.Background(), db, rowp.Id.Get())
+  DeleteMessagesByPK(context.Background(), db, rowp.Id.get())
 
 }
