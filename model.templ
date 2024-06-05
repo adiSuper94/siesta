@@ -62,17 +62,20 @@ func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ t
   return res, nil
 }
 
-func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase
-.ColumnName}} {{.GetGoType}}, {{end}}) {{toCamelCase $tableName}}{
+func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}) (*{{toCamelCase $tableName}}, error){
   query := "{{ $table.SelectByPKQuery }}"
   rawRow := db.QueryRow(ctx, query, {{range $table.PK}}{{ toLowerCamelCase .ColumnName}},{{end}})
   {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
   {{end}}
-  rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
+  err:= rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
+  if err != nil {
+    fmt.Printf("error while selecting row from {{$tableName}} \n error: %v", err)
+    return nil, err
+  }
   row := {{toCamelCase $tableName}}{
     {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
   }
-  return row
+  return &row, nil
 }
 
 func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}) (bool, error){
@@ -119,10 +122,48 @@ func Insert{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
   }
   return insertedRow ,nil
 }
+
+func Update{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCamelCase $tableName}}) (bool, error) {
+  setClause := ""
+  whereClause := ""
+  vals := make([]any, 1)
+  i := 1
+  {{range $table.Columns}}
+  if(!row.{{toCamelCase .ColumnName}}.IsEmpty()){
+    col := "{{.ColumnName}}"
+    vals = append(vals, row.{{toCamelCase .ColumnName}}.Get())
+    if i == 1 {
+      setClause = fmt.Sprintf("%s %s = $%d", setClause, col, i)
+    }else{
+      setClause = fmt.Sprintf("%s, %s = $%d", setClause, col, i)
+    }
+    i++
+  }
+  {{end}}
+  j := i
+  col := ""
+  {{range $table.PK}}
+  col = "{{.ColumnName}}"
+  vals = append(vals, row.{{toCamelCase .ColumnName}}.Get())
+  if i == j {
+    whereClause = fmt.Sprintf("%s %s = $%d", whereClause, col, i)
+  }else{
+    whereClause = fmt.Sprintf("%s AND %s = $%d", whereClause, col, i)
+  }
+  i++
+  {{end}}
+  query := fmt.Sprintf("UPDATE {{$tableName}} SET %s WHERE %s", setClause, whereClause)
+  _, err := db.Exec(ctx, query, vals[1:i]...)
+  if err != nil {
+    fmt.Printf("%v \n", err)
+    return false, err
+  }
+  return true, nil
+}
+
 {{end}}
 
 // test
-
 func createDBConnection(connectionCount int32) *pgxpool.Pool {
 	pgxConfig, err := pgxpool.ParseConfig("postgres://adisuper:adisuper@localhost:5432/turbo?sslmode=disable")
 	if err != nil {
