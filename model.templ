@@ -62,18 +62,6 @@ func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ t
   return res, nil
 }
 
-//func Insert{{ toCamelCase $tableName }}(ctx context.Context, db DBTX, t {{ toCamelCase $tableName }}) ({{ toCamelCase $tableName }}, error){
-//  query := "{{$table.InsertQuery}}"
-//  rawRow := db.QueryRow(ctx, query, {{range $table.Columns}}&t.{{ toCamelCase .ColumnName}},{{end}})
-//  {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
-//  {{end}}
-//  rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
-//  row := {{toCamelCase $tableName}}{
-//    {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
-//  }
-//  return row,nil
-//}
-
 func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase
 .ColumnName}} {{.GetGoType}}, {{end}}) {{toCamelCase $tableName}}{
   query := "{{ $table.SelectByPKQuery }}"
@@ -87,9 +75,14 @@ func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $ta
   return row
 }
 
-func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}){
+func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}) (bool, error){
   query := "{{$table.DeleteQuery}}"
-  db.Exec(ctx, query)
+  _, err := db.Exec(ctx, query, {{range $table.PK}}{{toLowerCamelCase .ColumnName}}, {{end}})
+  if err != nil {
+    fmt.Printf("error while deleting row from {{$tableName}} \n error: %v", err)
+    return false, err
+  }
+  return true, nil
 }
 
 func Insert{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCamelCase $tableName}}) (*{{toCamelCase $tableName}}, error){
@@ -112,15 +105,15 @@ func Insert{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
     }
   }
   {{end}}
-  query := fmt.Sprintf("INSERT INTO {{$tableName}} (%s) VALUES(%s) RETURNING *", cols, params)
-  rawRow, err := db.Query(ctx, query, vals...)
-  if err != nil{
-    fmt.Printf("Error while inserting into {{$tableName}} row: %v", row)
-    return nil, err
-  }
+  query := fmt.Sprintf("INSERT INTO {{$tableName}} (%s) VALUES (%s) RETURNING *", cols, params)
+  rawRow := db.QueryRow(ctx, query, vals[1:i]...)
   {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
   {{end}}
-  rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
+  err := rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
+  if err != nil{
+    fmt.Printf("Error while inserting into {{$tableName}} row: %v \n error: %v\n", row, err)
+    return nil, err
+  }
   insertedRow := &{{toCamelCase $tableName}}{
     {{range $table.Columns}}{{ toCamelCase .ColumnName}}:Some({{toCamelCase .ColumnName}}),{{end}}
   }
@@ -153,6 +146,21 @@ func main(){
   fmt.Printf("select all message : %v", rows)
 
   row:= GetMessagesByPK(context.Background(), db, "1f9ff8f2-d02a-4b13-a903-1b3fba06e5c9")
-  fmt.Printf("select one message : %v", row)
+	fmt.Printf("select all message : %v\n\n\n", rows)
+
+  msg := Messages{
+    Body: Some("test string"),
+    Id: None[string](),
+    ChatRoomId: Some("e654227a-b11b-48c5-b249-a9e378f64b5f"),
+    SenderId: Some("arun"),
+    CreatedAt: None[pgtype.Timestamptz](),
+    ModifiedAt: None[pgtype.Timestamptz](),
+  }
+	rowp, err := InsertMessages(context.Background(), db, msg)
+  if err != nil {
+    fmt.Printf("%v", err)
+  }
+  fmt.Printf("Inserted row is %v\n", rowp)
+  DeleteMessagesByPK(context.Background(), db, rowp.Id.Get())
 
 }
