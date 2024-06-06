@@ -2,6 +2,7 @@ package main
 import (
   "fmt"
 	"net/http"
+	"encoding/json"
 	"context"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/pgtype"
@@ -75,7 +76,7 @@ func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ t
   return res, nil
 }
 
-func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}) (*{{toCamelCase $tableName}}, error){
+func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} string, {{end}}) (*{{toCamelCase $tableName}}, error){
   query := "{{ $table.SelectByPKQuery }}"
   rawRow := db.QueryRow(ctx, query, {{range $table.PK}}{{ toLowerCamelCase .ColumnName}},{{end}})
   {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
@@ -180,15 +181,29 @@ func GetRouter(db DBTX) *http.ServeMux {
 	router := http.NewServeMux()
   {{ range $tableName, $table := .Tables }}
   router.HandleFunc("GET /{{$tableName}}", func(w http.ResponseWriter, r *http.Request) {
-    rows, err := SelectAll{{ toCamelCase $tableName}}(r.Context(), db)
+		{{range $table.PK}}
+    {{ toLowerCamelCase .ColumnName}} := r.FormValue("{{toLowerCamelCase .ColumnName}}")
+    if {{toLowerCamelCase .ColumnName}} == "" {
+      rows, err := SelectAll{{ toCamelCase $tableName}}(r.Context(), db)
+		  if err != nil {
+		  	fmt.Fprintf(os.Stderr, "Error while executing select query from {{$tableName}} \n%v\n", err)
+		  	w.WriteHeader(http.StatusInternalServerError)
+		  	return
+		  }
+  	  json.NewEncoder(w).Encode(rows)
+      return
+    }
+    {{end}}
+    rows, err := Get{{ toCamelCase $tableName}}ByPK(r.Context(), db, {{range $table.PK}}{{toLowerCamelCase .ColumnName}},{{end}})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error while executing select query from {{$tableName}} \n%v\n", err)
+			fmt.Fprintf(os.Stderr, "Error while executing select query by PK from {{$tableName}} \n%v\n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
     fmt.Printf("%v", rows)
   	json.NewEncoder(w).Encode(rows)
   })
+
   {{end}}
   return router
 }
