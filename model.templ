@@ -1,6 +1,7 @@
 package main
 import (
   "fmt"
+	"net/http"
 	"context"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/pgtype"
@@ -39,6 +40,18 @@ func (o option[T]) isEmpty() bool {
 type {{ toCamelCase $table.TableName}} struct {
 {{ range $table.Columns}} {{ toCamelCase .ColumnName }} option[{{ .GetGoType }}]
 {{end}}
+}
+
+func (t {{toCamelCase $tableName}}) MarshalJSON() ([]byte, error){
+  data := make(map[string]any)
+  {{range $table.Columns}}
+  if(!t.{{toCamelCase .ColumnName}}.isEmpty()){
+    key := "{{toCamelCase .ColumnName}}"
+    val := t.{{toCamelCase .ColumnName}}.get()
+    data[key] = val
+  }
+  {{end}}
+  return json.Marshal(data)
 }
 
 func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ toCamelCase $tableName }}, error){
@@ -163,6 +176,23 @@ func Update{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
 
 {{end}}
 
+func GetRouter(db DBTX) *http.ServeMux {
+	router := http.NewServeMux()
+  {{ range $tableName, $table := .Tables }}
+  router.HandleFunc("GET /{{$tableName}}", func(w http.ResponseWriter, r *http.Request) {
+    rows, err := SelectAll{{ toCamelCase $tableName}}(r.Context(), db)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error while executing select query from {{$tableName}} \n%v\n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+    fmt.Printf("%v", rows)
+  	json.NewEncoder(w).Encode(rows)
+  })
+  {{end}}
+  return router
+}
+
 // test
 func createDBConnection(connectionCount int32) *pgxpool.Pool {
 	pgxConfig, err := pgxpool.ParseConfig("postgres://adisuper:adisuper@localhost:5432/turbo?sslmode=disable")
@@ -230,5 +260,12 @@ func main(){
     return
   }
 	fmt.Printf("select all message after delete : %v\n\n", rows)
+
+  router := GetRouter(db)
+	httpServer := &http.Server{
+		Addr:    ":8080",
+		Handler: router,
+	}
+	log.Fatal(httpServer.ListenAndServe())
 
 }
