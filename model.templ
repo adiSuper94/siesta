@@ -179,16 +179,6 @@ func createDBConnection(connectionCount int32) *pgxpool.Pool {
 
 func main(){
   db := createDBConnection(1)
-  rows , err := SelectAllMessages(context.Background(), db)
-  if err != nil {
-    fmt.Printf("error : %v", err)
-    return
-  }
-  fmt.Printf("select all message : %v", rows)
-
-  row:= GetMessagesByPK(context.Background(), db, "1f9ff8f2-d02a-4b13-a903-1b3fba06e5c9")
-	fmt.Printf("select all message : %v\n\n\n", rows)
-
   msg := Messages{
     Body: some("test string"),
     Id: none[string](),
@@ -201,7 +191,44 @@ func main(){
   if err != nil {
     fmt.Printf("%v", err)
   }
-  fmt.Printf("Inserted row is %v\n", rowp)
-  DeleteMessagesByPK(context.Background(), db, rowp.Id.get())
+  fmt.Printf("Inserted row is %v\n\n", rowp)
+
+  row, err:= GetMessagesByPK(context.Background(), db, rowp.Id.get())
+  if err != nil {
+    fmt.Printf("error while executing select query: %v\n\n", err)
+    return
+  }
+  fmt.Printf("select inserted message : %v\n\n", row)
+
+  msg = Messages{
+    Id: rowp.Id,
+    Body: some("test string after update"),
+  }
+  ok, err := UpdateMessages(context.Background(), db, msg)
+  if err != nil {
+    fmt.Printf("error while executing update query: %v\n\n", err)
+    return
+  }
+  fmt.Printf("update successful :%v \n\n", ok)
+
+  row, err= GetMessagesByPK(context.Background(), db, rowp.Id.get())
+  if err != nil {
+    fmt.Printf("error while executing select query: %v\n\n", err)
+    return
+  }
+  fmt.Printf("select inserted message after update : %v\n\n", row)
+
+  ok, err = DeleteMessagesByPK(context.Background(), db, rowp.Id.get())
+  if err != nil {
+    fmt.Printf("error while executing delete query: %v\n\n", err)
+    return
+  }
+  fmt.Printf("delete successful :%v \n\n", ok)
+  rows , err := SelectAllMessages(context.Background(), db)
+  if err != nil {
+    fmt.Printf("error : %v", err)
+    return
+  }
+	fmt.Printf("select all message after delete : %v\n\n", rows)
 
 }
