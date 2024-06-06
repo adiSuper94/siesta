@@ -55,6 +55,29 @@ func (t {{toCamelCase $tableName}}) MarshalJSON() ([]byte, error){
   return json.Marshal(data)
 }
 
+func (t *{{toCamelCase $tableName}}) UnmarshalJSON(data []byte) error{
+  jason := make(map[string]json.RawMessage)
+  err := json.Unmarshal(data, &jason)
+  if err != nil {
+    fmt.Printf("error while unmarshalling json :%v\n", err)
+    return err
+  }
+  {{range $table.Columns}}
+    if jason["{{.ColumnName}}"] != nil{
+      var val {{.GetGoType}}
+      err = json.Unmarshal(jason["{{.ColumnName}}"], &val)
+      if err != nil {
+        fmt.Printf("error while unmarshalling json field {{.ColumnName}} :%v\n", err)
+        return err
+      }
+      t.{{toCamelCase .ColumnName}} = some(val)
+    }else{
+      t.{{toCamelCase .ColumnName}} = none[{{.GetGoType}}]()
+    }
+  {{end}}
+  return nil
+}
+
 func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ toCamelCase $tableName }}, error){
   var res []{{ toCamelCase $tableName }}
   query := "{{$table.SelectAllQuery}}"
@@ -76,7 +99,7 @@ func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ t
   return res, nil
 }
 
-func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} string, {{end}}) (*{{toCamelCase $tableName}}, error){
+func Select{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} string, {{end}}) (*{{toCamelCase $tableName}}, error){
   query := "{{ $table.SelectByPKQuery }}"
   rawRow := db.QueryRow(ctx, query, {{range $table.PK}}{{ toLowerCamelCase .ColumnName}},{{end}})
   {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
@@ -92,7 +115,7 @@ func Get{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $ta
   return &row, nil
 }
 
-func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}) (bool, error){
+func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} string, {{end}}) (bool, error){
   query := "{{$table.DeleteQuery}}"
   _, err := db.Exec(ctx, query, {{range $table.PK}}{{toLowerCamelCase .ColumnName}}, {{end}})
   if err != nil {
@@ -181,27 +204,60 @@ func GetRouter(db DBTX) *http.ServeMux {
 	router := http.NewServeMux()
   {{ range $tableName, $table := .Tables }}
   router.HandleFunc("GET /{{$tableName}}", func(w http.ResponseWriter, r *http.Request) {
-		{{range $table.PK}}
-    {{ toLowerCamelCase .ColumnName}} := r.FormValue("{{toLowerCamelCase .ColumnName}}")
-    if {{toLowerCamelCase .ColumnName}} == "" {
-      rows, err := SelectAll{{ toCamelCase $tableName}}(r.Context(), db)
-		  if err != nil {
-		  	fmt.Fprintf(os.Stderr, "Error while executing select query from {{$tableName}} \n%v\n", err)
-		  	w.WriteHeader(http.StatusInternalServerError)
-		  	return
-		  }
-  	  json.NewEncoder(w).Encode(rows)
-      return
-    }
-    {{end}}
-    rows, err := Get{{ toCamelCase $tableName}}ByPK(r.Context(), db, {{range $table.PK}}{{toLowerCamelCase .ColumnName}},{{end}})
+    rows, err := SelectAll{{ toCamelCase $tableName}}(r.Context(), db)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error while executing select query by PK from {{$tableName}} \n%v\n", err)
+			fmt.Fprintf(os.Stderr, "Error while executing select query from {{$tableName}} \n%v\n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-    fmt.Printf("%v", rows)
   	json.NewEncoder(w).Encode(rows)
+    return
+  })
+
+  router.HandleFunc("GET /{{$tableName}}{{range $table.PK}}/{{.ColumnName}}/{{"{"}}{{toLowerCamelCase .ColumnName}}{{"}"}}{{end}}", func(w http.ResponseWriter, r *http.Request) {
+    {{range $table.PK}}
+    {{toLowerCamelCase .ColumnName}} := r.PathValue("{{toLowerCamelCase .ColumnName}}")
+    {{end}}
+    row, err := Select{{toCamelCase $tableName}}ByPK(r.Context(), db, {{range $table.PK}}{{toLowerCamelCase .ColumnName}}, {{end}})
+    if err != nil {
+			fmt.Fprintf(os.Stderr, "Error while executing select query by PK from {{$tableName}} \n%v\n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+    }
+  	json.NewEncoder(w).Encode(row)
+    return
+  })
+
+  router.HandleFunc("DELETE /{{$tableName}}{{range $table.PK}}/{{.ColumnName}}/{{"{"}}{{toLowerCamelCase .ColumnName}}{{"}"}}{{end}}", func(w http.ResponseWriter, r *http.Request) {
+    {{range $table.PK}}
+    {{toLowerCamelCase .ColumnName}} := r.PathValue("{{toLowerCamelCase .ColumnName}}")
+    {{end}}
+    ok, err := Delete{{toCamelCase $tableName}}ByPK(r.Context(), db, {{range $table.PK}}{{toLowerCamelCase .ColumnName}}, {{end}})
+    if err != nil || !ok {
+			fmt.Fprintf(os.Stderr, "Error while executing delete query by PK from {{$tableName}} \n%v\n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+    }
+    w.WriteHeader(http.StatusNoContent)
+    return
+  })
+
+  router.HandleFunc("POST /{{$tableName}}", func(w http.ResponseWriter, r *http.Request) {
+    decoder := json.NewDecoder(r.Body)
+    var body {{toCamelCase $tableName}}
+    err :=  decoder.Decode(&body)
+    if err != nil {
+      fmt.Printf("error while decoding body of {{$tableName}}, error: %v \n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+    }
+    insertedRow, err := Insert{{toCamelCase $tableName}}(r.Context(), db, body)
+    if err != nil {
+      fmt.Printf("error while inserting into {{$tableName}}, error: %v \n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+    }
+  	json.NewEncoder(w).Encode(insertedRow)
   })
 
   {{end}}
@@ -238,7 +294,7 @@ func main(){
   }
   fmt.Printf("Inserted row is %v\n\n", rowp)
 
-  row, err:= GetMessagesByPK(context.Background(), db, rowp.Id.get())
+  row, err:= SelectMessagesByPK(context.Background(), db, rowp.Id.get())
   if err != nil {
     fmt.Printf("error while executing select query: %v\n\n", err)
     return
@@ -256,7 +312,7 @@ func main(){
   }
   fmt.Printf("update successful :%v \n\n", ok)
 
-  row, err= GetMessagesByPK(context.Background(), db, rowp.Id.get())
+  row, err= SelectMessagesByPK(context.Background(), db, rowp.Id.get())
   if err != nil {
     fmt.Printf("error while executing select query: %v\n\n", err)
     return
