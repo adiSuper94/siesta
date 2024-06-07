@@ -260,6 +260,24 @@ func GetRouter(db DBTX) *http.ServeMux {
   	json.NewEncoder(w).Encode(insertedRow)
   })
 
+  router.HandleFunc("PUT /{{$tableName}}", func(w http.ResponseWriter, r *http.Request) {
+    decoder := json.NewDecoder(r.Body)
+    var body {{toCamelCase $tableName}}
+    err :=  decoder.Decode(&body)
+    if err != nil {
+      fmt.Printf("error while decoding body of {{$tableName}}, error: %v \n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+    }
+    ok, err := Update{{toCamelCase $tableName}}(r.Context(), db , body)
+    if err != nil || !ok {
+      fmt.Printf("error while inserting into {{$tableName}}, error: %v \n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+    }
+		w.WriteHeader(http.StatusCreated)
+  })
+
   {{end}}
   return router
 }
