@@ -99,7 +99,7 @@ func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ t
   return res, nil
 }
 
-func Select{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} string, {{end}}) (*{{toCamelCase $tableName}}, error){
+func Select{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}) (*{{toCamelCase $tableName}}, error){
   query := "{{ $table.SelectByPKQuery }}"
   rawRow := db.QueryRow(ctx, query, {{range $table.PK}}{{ toLowerCamelCase .ColumnName}},{{end}})
   {{ range $table.Columns}} var {{ toCamelCase .ColumnName }} {{ .GetGoType }}
@@ -115,7 +115,7 @@ func Select{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range 
   return &row, nil
 }
 
-func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} string, {{end}}) (bool, error){
+func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range $table.PK}}{{toLowerCamelCase .ColumnName}} {{.GetGoType}}, {{end}}) (bool, error){
   query := "{{$table.DeleteQuery}}"
   _, err := db.Exec(ctx, query, {{range $table.PK}}{{toLowerCamelCase .ColumnName}}, {{end}})
   if err != nil {
@@ -200,6 +200,20 @@ func Update{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
 
 {{end}}
 
+func cast(str string, tipe string) any {
+	switch tipe {
+	case "string":
+		return str
+	case "bool":
+		if str == "true" {
+			return true
+		} else if str == "false" {
+			return false
+		}
+	}
+	return nil
+}
+
 func GetRouter(db DBTX) *http.ServeMux {
 	router := http.NewServeMux()
   {{ range $tableName, $table := .Tables }}
@@ -216,7 +230,8 @@ func GetRouter(db DBTX) *http.ServeMux {
 
   router.HandleFunc("GET /{{$tableName}}{{range $table.PK}}/{{.ColumnName}}/{{"{"}}{{toLowerCamelCase .ColumnName}}{{"}"}}{{end}}", func(w http.ResponseWriter, r *http.Request) {
     {{range $table.PK}}
-    {{toLowerCamelCase .ColumnName}} := r.PathValue("{{toLowerCamelCase .ColumnName}}")
+    {{toLowerCamelCase .ColumnName}}Str := r.PathValue("{{toLowerCamelCase .ColumnName}}")
+    {{toLowerCamelCase .ColumnName}} := cast({{toLowerCamelCase .ColumnName}}Str, "{{.GetGoType}}").({{.GetGoType}})
     {{end}}
     row, err := Select{{toCamelCase $tableName}}ByPK(r.Context(), db, {{range $table.PK}}{{toLowerCamelCase .ColumnName}}, {{end}})
     if err != nil {
@@ -230,7 +245,8 @@ func GetRouter(db DBTX) *http.ServeMux {
 
   router.HandleFunc("DELETE /{{$tableName}}{{range $table.PK}}/{{.ColumnName}}/{{"{"}}{{toLowerCamelCase .ColumnName}}{{"}"}}{{end}}", func(w http.ResponseWriter, r *http.Request) {
     {{range $table.PK}}
-    {{toLowerCamelCase .ColumnName}} := r.PathValue("{{toLowerCamelCase .ColumnName}}")
+    {{toLowerCamelCase .ColumnName}}Str := r.PathValue("{{toLowerCamelCase .ColumnName}}")
+    {{toLowerCamelCase .ColumnName}} := cast({{toLowerCamelCase .ColumnName}}Str, "{{.GetGoType}}").({{.GetGoType}})
     {{end}}
     ok, err := Delete{{toCamelCase $tableName}}ByPK(r.Context(), db, {{range $table.PK}}{{toLowerCamelCase .ColumnName}}, {{end}})
     if err != nil || !ok {
