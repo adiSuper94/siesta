@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +15,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+//go:embed model.templ
+var modelTempl string
 
 type DBTX interface {
 	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
@@ -219,10 +223,9 @@ func (db pgAdapter) scanDB(ctx context.Context) {
 		table.pk[columnName.String] = pkColumn
 
 	}
-	fmt.Printf("\n\n\n")
 	tmpl, err := template.New("model.templ").
 		Funcs(template.FuncMap{"toCamelCase": strcase.ToCamel, "toLowerCamelCase": strcase.ToLowerCamel}).
-		ParseFiles("model.templ")
+		Parse(modelTempl)
 	if err != nil {
 		log.Fatalf("errror while parsing template %v", err)
 	}
