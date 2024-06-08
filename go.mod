@@ -1,4 +1,4 @@
-module adisuper94/siesta
+module github.com/adisuper94/siesta
 
 go 1.22.3
 
