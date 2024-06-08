@@ -1,8 +1,9 @@
-package main
+package generated
 
 import (
   "fmt"
 	"net/http"
+  "os"
 	"encoding/json"
 	"context"
 	"github.com/jackc/pgx/v5"
@@ -60,7 +61,7 @@ func (t *{{toCamelCase $tableName}}) UnmarshalJSON(data []byte) error{
   jason := make(map[string]json.RawMessage)
   err := json.Unmarshal(data, &jason)
   if err != nil {
-    fmt.Printf("error while unmarshalling json :%v\n", err)
+    fmt.Fprintf(os.Stderr, "error while unmarshalling json :%v\n", err)
     return err
   }
   {{range $table.Columns}}
@@ -68,7 +69,7 @@ func (t *{{toCamelCase $tableName}}) UnmarshalJSON(data []byte) error{
       var val {{.GetGoType}}
       err = json.Unmarshal(jason["{{.ColumnName}}"], &val)
       if err != nil {
-        fmt.Printf("error while unmarshalling json field {{.ColumnName}} :%v\n", err)
+        fmt.Fprintf(os.Stderr, "error while unmarshalling json field {{.ColumnName}} :%v\n", err)
         return err
       }
       t.{{toCamelCase .ColumnName}} = some(val)
@@ -85,7 +86,7 @@ func SelectAll{{ toCamelCase $tableName }}(ctx context.Context, db DBTX) ([]{{ t
 	rows, err := db.Query(ctx, query)
   defer rows.Close()
   if err != nil{
-    fmt.Printf("error while executing %v \n Error: %v\n", query, err)
+    fmt.Fprintf(os.Stderr, "error while executing %v \n Error: %v\n", query, err)
     return res, err
   }
   for rows.Next(){
@@ -107,7 +108,7 @@ func Select{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range 
   {{end}}
   err:= rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
   if err != nil {
-    fmt.Printf("error while selecting row from {{$tableName}} \n error: %v", err)
+    fmt.Fprintf(os.Stderr, "error while selecting row from {{$tableName}} \n error: %v", err)
     return nil, err
   }
   row := {{toCamelCase $tableName}}{
@@ -120,7 +121,7 @@ func Delete{{toCamelCase $tableName}}ByPK(ctx context.Context, db DBTX, {{range 
   query := "{{$table.DeleteQuery}}"
   _, err := db.Exec(ctx, query, {{range $table.PK}}{{toLowerCamelCase .ColumnName}}, {{end}})
   if err != nil {
-    fmt.Printf("error while deleting row from {{$tableName}} \n error: %v", err)
+    fmt.Fprintf(os.Stderr, "error while deleting row from {{$tableName}} \n error: %v", err)
     return false, err
   }
   return true, nil
@@ -152,7 +153,7 @@ func Insert{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
   {{end}}
   err := rawRow.Scan({{range $table.Columns}}&{{ toCamelCase .ColumnName}},{{end}})
   if err != nil{
-    fmt.Printf("Error while inserting into {{$tableName}} row: %v \n error: %v\n", row, err)
+    fmt.Fprintf(os.Stderr, "Error while inserting into {{$tableName}} row: %v \n error: %v\n", row, err)
     return nil, err
   }
   insertedRow := &{{toCamelCase $tableName}}{
@@ -193,7 +194,7 @@ func Update{{toCamelCase $tableName}}(ctx context.Context, db DBTX, row {{toCame
   query := fmt.Sprintf("UPDATE {{$tableName}} SET %s WHERE %s", setClause, whereClause)
   _, err := db.Exec(ctx, query, vals[1:i]...)
   if err != nil {
-    fmt.Printf("%v \n", err)
+    fmt.Fprintf(os.Stderr, "%v \n", err)
     return false, err
   }
   return true, nil
@@ -264,13 +265,13 @@ func GetRouter(db DBTX) *http.ServeMux {
     var body {{toCamelCase $tableName}}
     err :=  decoder.Decode(&body)
     if err != nil {
-      fmt.Printf("error while decoding body of {{$tableName}}, error: %v \n", err)
+      fmt.Fprintf(os.Stderr, "error while decoding body of {{$tableName}}, error: %v \n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
     }
     insertedRow, err := Insert{{toCamelCase $tableName}}(r.Context(), db, body)
     if err != nil {
-      fmt.Printf("error while inserting into {{$tableName}}, error: %v \n", err)
+      fmt.Fprintf(os.Stderr, "error while inserting into {{$tableName}}, error: %v \n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
     }
@@ -282,13 +283,13 @@ func GetRouter(db DBTX) *http.ServeMux {
     var body {{toCamelCase $tableName}}
     err :=  decoder.Decode(&body)
     if err != nil {
-      fmt.Printf("error while decoding body of {{$tableName}}, error: %v \n", err)
+      fmt.Fprintf(os.Stderr, "error while decoding body of {{$tableName}}, error: %v \n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
     }
     ok, err := Update{{toCamelCase $tableName}}(r.Context(), db , body)
     if err != nil || !ok {
-      fmt.Printf("error while inserting into {{$tableName}}, error: %v \n", err)
+      fmt.Fprintf(os.Stderr, "error while inserting into {{$tableName}}, error: %v \n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
     }
@@ -299,79 +300,3 @@ func GetRouter(db DBTX) *http.ServeMux {
   return router
 }
 
-// test
-func createDBConnection(connectionCount int32) *pgxpool.Pool {
-	pgxConfig, err := pgxpool.ParseConfig("postgres://adisuper:adisuper@localhost:5432/turbo?sslmode=disable")
-	if err != nil {
-		panic(err)
-	}
-	pgxConfig.MaxConns = connectionCount
-	conn, err := pgxpool.NewWithConfig(context.TODO(), pgxConfig)
-	if err != nil {
-		panic(err)
-	}
-	return conn
-}
-
-func main(){
-  db := createDBConnection(1)
-  msg := Messages{
-    Body: some("test string"),
-    Id: none[string](),
-    ChatRoomId: some("e654227a-b11b-48c5-b249-a9e378f64b5f"),
-    SenderId: some("arun"),
-    CreatedAt: none[pgtype.Timestamptz](),
-    ModifiedAt: none[pgtype.Timestamptz](),
-  }
-	rowp, err := InsertMessages(context.Background(), db, msg)
-  if err != nil {
-    fmt.Printf("%v", err)
-  }
-  fmt.Printf("Inserted row is %v\n\n", rowp)
-
-  row, err:= SelectMessagesByPK(context.Background(), db, rowp.Id.get())
-  if err != nil {
-    fmt.Printf("error while executing select query: %v\n\n", err)
-    return
-  }
-  fmt.Printf("select inserted message : %v\n\n", row)
-
-  msg = Messages{
-    Id: rowp.Id,
-    Body: some("test string after update"),
-  }
-  ok, err := UpdateMessages(context.Background(), db, msg)
-  if err != nil {
-    fmt.Printf("error while executing update query: %v\n\n", err)
-    return
-  }
-  fmt.Printf("update successful :%v \n\n", ok)
-
-  row, err= SelectMessagesByPK(context.Background(), db, rowp.Id.get())
-  if err != nil {
-    fmt.Printf("error while executing select query: %v\n\n", err)
-    return
-  }
-  fmt.Printf("select inserted message after update : %v\n\n", row)
-
-  ok, err = DeleteMessagesByPK(context.Background(), db, rowp.Id.get())
-  if err != nil {
-    fmt.Printf("error while executing delete query: %v\n\n", err)
-    return
-  }
-  fmt.Printf("delete successful :%v \n\n", ok)
-  rows , err := SelectAllMessages(context.Background(), db)
-  if err != nil {
-    fmt.Printf("error : %v", err)
-    return
-  }
-	fmt.Printf("select all message after delete : %v\n\n", rows)
-
-  router := GetRouter(db)
-	httpServer := &http.Server{
-		Addr:    ":8080",
-		Handler: router,
-	}
-	log.Fatal(httpServer.ListenAndServe())
-
-}

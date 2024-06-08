@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	_ "embed"
 	"flag"
 	"fmt"
+	"go/format"
 	"log"
 	"os"
 	"text/template"
@@ -240,10 +242,16 @@ func (db pgAdapter) scanDB(ctx context.Context) {
 		log.Fatalf("error while creating file \n %v", err)
 	}
 	for _, schema := range catalog {
-		err := tmpl.Execute(f, schema)
+    var buf bytes.Buffer
+		err := tmpl.Execute(&buf, schema)
 		if err != nil {
 			log.Fatalf("error while executing template \n %v", err)
 		}
+    p, err := format.Source(buf.Bytes())
+    if err != nil{
+      log.Fatalf("error while formatting generated source code %v\n", err)
+    }
+    f.Write(p)
 	}
 }
 
@@ -330,3 +338,80 @@ func main() {
 	pg.scanDB(context.Background())
 
 }
+
+// // test
+// func createDBConnection(connectionCount int32) *pgxpool.Pool {
+// 	pgxConfig, err := pgxpool.ParseConfig("postgres://adisuper:adisuper@localhost:5432/turbo?sslmode=disable")
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	pgxConfig.MaxConns = connectionCount
+// 	conn, err := pgxpool.NewWithConfig(context.TODO(), pgxConfig)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	return conn
+// }
+//
+// func main(){
+//   db := createDBConnection(1)
+//   msg := Messages{
+//     Body: some("test string"),
+//     Id: none[string](),
+//     ChatRoomId: some("e654227a-b11b-48c5-b249-a9e378f64b5f"),
+//     SenderId: some("arun"),
+//     CreatedAt: none[pgtype.Timestamptz](),
+//     ModifiedAt: none[pgtype.Timestamptz](),
+//   }
+// 	rowp, err := InsertMessages(context.Background(), db, msg)
+//   if err != nil {
+//     fmt.Printf("%v", err)
+//   }
+//   fmt.Printf("Inserted row is %v\n\n", rowp)
+//
+//   row, err:= SelectMessagesByPK(context.Background(), db, rowp.Id.get())
+//   if err != nil {
+//     fmt.Printf("error while executing select query: %v\n\n", err)
+//     return
+//   }
+//   fmt.Printf("select inserted message : %v\n\n", row)
+//
+//   msg = Messages{
+//     Id: rowp.Id,
+//     Body: some("test string after update"),
+//   }
+//   ok, err := UpdateMessages(context.Background(), db, msg)
+//   if err != nil {
+//     fmt.Printf("error while executing update query: %v\n\n", err)
+//     return
+//   }
+//   fmt.Printf("update successful :%v \n\n", ok)
+//
+//   row, err= SelectMessagesByPK(context.Background(), db, rowp.Id.get())
+//   if err != nil {
+//     fmt.Printf("error while executing select query: %v\n\n", err)
+//     return
+//   }
+//   fmt.Printf("select inserted message after update : %v\n\n", row)
+//
+//   ok, err = DeleteMessagesByPK(context.Background(), db, rowp.Id.get())
+//   if err != nil {
+//     fmt.Printf("error while executing delete query: %v\n\n", err)
+//     return
+//   }
+//   fmt.Printf("delete successful :%v \n\n", ok)
+//   rows , err := SelectAllMessages(context.Background(), db)
+//   if err != nil {
+//     fmt.Printf("error : %v", err)
+//     return
+//   }
+// 	fmt.Printf("select all message after delete : %v\n\n", rows)
+//
+//   router := GetRouter(db)
+// 	httpServer := &http.Server{
+// 		Addr:    ":8080",
+// 		Handler: router,
+// 	}
+// 	log.Fatal(httpServer.ListenAndServe())
+//
+// }
