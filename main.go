@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -302,8 +303,8 @@ func (column pgColumn) GetGoType() string {
 	return ""
 }
 
-func createDBConnection(connectionCount int32) *pgxpool.Pool {
-	pgxConfig, err := pgxpool.ParseConfig("postgres://adisuper:adisuper@localhost:5432/turbo?sslmode=disable")
+func createDBConnection(dbUrl string, connectionCount int32) *pgxpool.Pool {
+	pgxConfig, err := pgxpool.ParseConfig(dbUrl)
 	if err != nil {
 		panic(err)
 	}
@@ -318,7 +319,9 @@ func createDBConnection(connectionCount int32) *pgxpool.Pool {
 func main() {
 	var connectionCount int32
 	connectionCount = 2
-	conn := createDBConnection(connectionCount)
+  dbUrl := flag.String("db","postgres://postgres:postgres@localhost:5432/postgres","database url")
+  flag.Parse()
+	conn := createDBConnection(*dbUrl, connectionCount)
 	defer conn.Close()
 	pg := New(conn)
 	pg.scanDB(context.Background())
